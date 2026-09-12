@@ -26,3 +26,6 @@ assets/qr-donate.png
 # 临时文件
 .commit-message.txt
 
+
+.commit-msg.txt
+

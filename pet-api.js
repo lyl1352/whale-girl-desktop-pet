@@ -55,6 +55,7 @@ function takeItems() {
 // `turn/start` / `turn/end`，用它才准。
 // ---------------------------------------------------------------------------
 function createWatcher(deps) {
+  let lastFile = null   // 当前跟随的会话文件；换了就重置水位
   let lastSeq = null
   let busy = false
   let busySince = 0
@@ -98,25 +99,33 @@ function createWatcher(deps) {
   async function poll() {
     let snap
     try { snap = await deps.tailEvents() } catch { return }
-    if (!snap || !Array.isArray(snap.events) || snap.events.length === 0) return
+    if (!snap || typeof snap.file !== 'string' || !Array.isArray(snap.events)) return
+    // 事件按 seq 排序（seq 是会话内单调递增的，跨会话不可比）
     const evs = snap.events.filter((e) => e && typeof e.seq === 'number').sort((a, b) => a.seq - b.seq)
-    if (evs.length === 0) return
 
-    if (lastSeq === null) {
-      // 首次挂载：只记水位，不回放历史（否则会把早就结束的回合当成刚完成）
-      lastSeq = evs[evs.length - 1].seq
+    const switched = snap.file !== lastFile
+    if (switched || lastSeq === null) {
+      // 换会话了（或首次挂载）：水位必须**跟着会话重置**。
+      // 否则新会话的 seq 比旧水位小，事件会被整批当成"已处理"丢掉 —— 表现就是
+      // "切到别的对话，桌宠完全没反应"。
+      lastFile = snap.file
+      lastSeq = evs.length ? evs[evs.length - 1].seq : null
+      lastAct = null
+      // 按新会话尾部状态同步 mood，但**不发通知**（切过去不该弹"任务完成"）
       let inTurn = false
       for (const ev of evs) {
         if (ev.type === 'turn/start') inTurn = true
         else if (ev.type === 'turn/end') inTurn = false
       }
-      if (inTurn) {
-        busy = true
-        busySince = Date.now()
-        pushItem({ type: 'mood', mood: 'working' })
-      }
+      const was = busy
+      busy = inTurn
+      busySince = Date.now()
+      if (inTurn && !was) pushItem({ type: 'mood', mood: 'working' })
+      else if (!inTurn && was) pushItem({ type: 'mood', mood: 'idle' })
+      if (switched) console.log('[whale-pet] followed session -> ' + snap.file)
       return
     }
+    if (evs.length === 0) return
 
     for (const ev of evs) {
       if (ev.seq <= lastSeq) continue
