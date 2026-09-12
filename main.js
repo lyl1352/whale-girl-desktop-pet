@@ -460,7 +460,12 @@ function createWindow(origin) {
     },
   })
   win.setAlwaysOnTop(true, 'screen-saver')
-  win.loadURL(origin + '/')
+  // 尺寸按配置拼进 URL 传给渲染进程（原版把 size 读进闭包，外壳靠 config prop 覆盖它）
+  {
+    const s = Number(readConfig().size)
+    const q = Number.isFinite(s) && s > 0 ? '?size=' + Math.round(s) : ''
+    win.loadURL(origin + '/' + q)
+  }
   win.once('ready-to-show', () => { win.showInactive(); applyWindowBounds() })
   win.webContents.on('did-finish-load', () => {
     win.webContents.send('hint', 'ready')
@@ -475,6 +480,14 @@ function createWindow(origin) {
 // ---------------------------------------------------------------------------
 ipcMain.on('pet:rects', (_e, boxes) => {
   if (Array.isArray(boxes)) petRects = boxes
+})
+
+// 配置读写（preload 里早就暴露了 setConfig / getConfig，但主进程一直没接 —— 调用会报
+// "No handler registered"。补上，尺寸等设置要靠它落盘。）
+ipcMain.handle('config', () => readConfig())
+ipcMain.handle('setConfig', (_e, patch) => {
+  if (patch && typeof patch === 'object' && !Array.isArray(patch)) writeConfig(patch)
+  return readConfig()
 })
 
 ipcMain.on('pet:contextmenu', () => {
