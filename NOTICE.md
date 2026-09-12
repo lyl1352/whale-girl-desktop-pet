@@ -16,23 +16,23 @@
 
 | 路径 | 内容 | 说明 |
 |---|---|---|
-| `vendor/dsh-whale-girl-pet.client.js` | 浏览器半侧完整代码 | 原样 vendored，仅 **2 处**小改动（见下） |
+| `vendor/dsh-whale-girl-pet.client.js` | 浏览器半侧完整代码 | 原样 vendored，仅 **1 处**小改动（见下） |
 | `vendor/usage.mjs` | 用量与计费内核（`lib/usage.js`） | 原样 vendored，用于本地算费用 |
 | `assets/*.webm` | 50 个透明动画（`assets/thumb/`） | **不随仓库分发**，由 `tools/fetch-assets.ps1` 在安装时从 npm 拉取 |
 | `assets/preview-*.gif`、`qr-donate.png` | 预览图与赞助码 | 同上，安装时拉取 |
 
-### 对原版 client.js 的全部改动（共 2 处，均为本 fork 新增功能）
+### 对原版 client.js 的全部改动（共 1 处）
 
-1. **`WORKING_POOL` 增加 `'吃小鱼干'`**
-   让她在工作轮播里也会顺手吃根小鱼干。
+**`handleFeed()` 里清掉工作轮播定时器**
+```js
+if (workingTimerRef.current) clearTimeout(workingTimerRef.current);
+```
+让「投喂 / 充值到账」的吃零食动画能完整播完而不被工作轮播顶掉。
+播完后 `handleEnded` 原本就会判断：仍在工作 → `playWorking()` 接回工作轮播；
+否则 → 回待机链（`吃小鱼干` 本来就在 `INTERRUPT` 集合里，无需额外改动）。
 
-2. **`handleFeed()` 里清掉工作轮播定时器**
-   ```js
-   if (workingTimerRef.current) clearTimeout(workingTimerRef.current);
-   ```
-   让「投喂 / 充值到账」的吃零食动画能完整播完而不被工作轮播顶掉。
-   播完后 `handleEnded` 原本就会判断：仍在工作 → `playWorking()` 接回工作轮播；
-   否则 → 回待机链（`吃小鱼干` 本来就在 `INTERRUPT` 集合里，无需额外改动）。
+> 注意：**没有**把 `吃小鱼干` 并进 `WORKING_POOL`。工作轮播池保持原版的 4 项，
+> 所以只有「手动投喂」和「充值到账」才会吃零食，工作时不会自己随机掏零食吃。
 
 除这 2 处外，动画节奏、文案、看板、拖拽、漫游、点击回应等全部行为都来自原版代码。
 

@@ -42,7 +42,7 @@
 
 大多数「把网页插件搬到桌面」的方案会重写一遍行为逻辑，结果总是差一点：
 动画节奏不对、气泡文案不同、少个按钮。这里的做法是**几乎不改原版代码**
-（全部改动只有 2 处，见 `NOTICE.md`，都为了新增的充值投喂功能）：
+（全部改动只有 1 处，见 `NOTICE.md`，为了新增的充值投喂功能）：
 
 ```
 ┌─ Electron 主进程 (main.js) ─────────────────────────────────┐
@@ -56,7 +56,7 @@
                             ▼
 ┌─ 渲染进程 (renderer/shell.html) ────────────────────────────┐
 │  · React 18 + window.__ModuleLoader__ + ctx.slots/locale 桩  │
-│  · vendor/dsh-whale-girl-pet.client.js   ← 原版（仅 2 处新增功能改动）│
+│  · vendor/dsh-whale-girl-pet.client.js   ← 原版（仅 1 处改动）│
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -280,7 +280,7 @@ dsh plugin --profile desktop add <本仓库路径>\dsh-plugin
 桌宠本体的立绘、动画、浏览器端代码与计费内核来自
 **[yanzwzz/dsh-whale-girl-pet](https://github.com/yanzwzz/dsh-whale-girl-pet)**
 （MIT，Copyright (c) 2026 dsh-whale-girl-pet contributors）。本仓库对它的改动只有
-`NOTICE.md` 里列出的 2 处（为充值投喂功能），其余全部原样使用。
+`NOTICE.md` 里列出的 1 处（为充值投喂功能），其余全部原样使用。
 
 React / ReactDOM（MIT，Meta Platforms）与 Electron（MIT）同样见 `NOTICE.md` 与
 `vendor/LICENSE-*`。**分发时请保留这些声明。**
