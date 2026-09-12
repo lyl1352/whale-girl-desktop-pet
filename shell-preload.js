@@ -7,4 +7,5 @@ contextBridge.exposeInMainWorld('petShell', {
   getState: () => ipcRenderer.invoke('pet:state'),
   setConfig: (patch) => ipcRenderer.invoke('setConfig', patch),
   getConfig: () => ipcRenderer.invoke('config'),
+  onRecharge: (cb) => ipcRenderer.on('recharge', (_e, info) => cb(info)),
 })

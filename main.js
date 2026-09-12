@@ -231,6 +231,51 @@ function setAutostart(on) {
 }
 
 // ---------------------------------------------------------------------------
+// 充值：打开充值页 → 盯余额 → 到账了就让她吃零食
+//
+// 不能直接调原版内部函数（都在闭包里），但原版「投喂」按钮的行为正是
+// 「吃小鱼干 + 开饭！气泡」，所以到账时程序化点一下那个按钮即可 —— **不用改原版一行代码**。
+// 额外再用外壳自己画一个气泡说明到账金额。
+// ---------------------------------------------------------------------------
+const TOPUP_WATCH_MS = 15 * 60 * 1000   // 最多盯 15 分钟
+const TOPUP_POLL_MS = 20 * 1000         // 每 20 秒查一次余额
+let topUpTimer = null
+
+function stopTopUpWatch() {
+  if (topUpTimer) { clearInterval(topUpTimer); topUpTimer = null }
+}
+
+async function startTopUp() {
+  shell.openExternal('https://platform.deepseek.com/top_up')
+  stopTopUpWatch()
+  let baseline
+  try {
+    baseline = (await petApi.fetchBalanceTotal()).total
+  } catch (e) {
+    console.log('[whale-pet] topup: 拿不到基准余额（' + ((e && e.message) || e) + '）')
+    return
+  }
+  console.log('[whale-pet] topup watch start, baseline=' + baseline)
+  const started = Date.now()
+  topUpTimer = setInterval(async () => {
+    if (Date.now() - started > TOPUP_WATCH_MS) {
+      stopTopUpWatch()
+      console.log('[whale-pet] topup watch timeout')
+      return
+    }
+    try {
+      const now = (await petApi.fetchBalanceTotal()).total
+      if (now > baseline + 0.009) {
+        const delta = Math.round((now - baseline) * 100) / 100
+        stopTopUpWatch()
+        console.log('[whale-pet] topup detected +' + delta)
+        if (win && !win.isDestroyed()) win.webContents.send('recharge', { delta, total: now })
+      }
+    } catch { /* 网络抖动忽略，下一轮再试 */ }
+  }, TOPUP_POLL_MS)
+}
+
+// ---------------------------------------------------------------------------
 // 托盘 / 右键菜单 / 快捷键
 // ---------------------------------------------------------------------------
 /** 托盘菜单与「桌宠右键菜单」共用同一份模板。 */
@@ -239,6 +284,7 @@ function menuTemplate() {
     { label: '🐋 鲸鱼娘桌面宠', enabled: false },
     { type: 'separator' },
     { label: '桌宠设置…（天气城市等）', click: () => openSettingsWindow() },
+    { label: '💰 充值 DeepSeek…（到账她会吃零食）', click: () => startTopUp() },
     {
       label: '显示 / 隐藏',
       click: () => {
@@ -409,11 +455,13 @@ ipcMain.handle('pet:state', () => ({
   autostart: autostartOn(),
   forceThrough,
   clickThrough: readConfig().clickThrough === true,
+  working: !!(apiCtl && apiCtl.watcher && apiCtl.watcher.isBusy()),
 }))
 
 ipcMain.on('pet:action', (_e, name) => {
   switch (name) {
     case 'settings': openSettingsWindow(); break
+    case 'topup': startTopUp(); break
     case 'roam':
       writeConfig({ roamFullscreen: !fullscreenRoam })
       syncRoamMode()
@@ -458,6 +506,24 @@ app.whenReady().then(async () => {
       // 开发调试钩子：默认关闭，只在 PET_DEV=1 时启用
       // （eval 能在页面里执行任意 JS，公开版本不能默认开着）
       if (process.env.PET_DEV) {
+        // 调试：模拟一次充值到账（走和真实到账完全相同的链路）
+        if (url.pathname === '/api/whale-pet/simulate-recharge') {
+          const delta = Number(url.searchParams.get('delta') || 50)
+          if (win && !win.isDestroyed()) win.webContents.send('recharge', { delta, total: 100 + delta })
+          const body = Buffer.from(JSON.stringify({ ok: true, delta }), 'utf8')
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': String(body.length) })
+          res.end(body)
+          return true
+        }
+        // 调试：手动注入一条 mood（用来验证待机链/漫游，不用等真实回合结束）
+        if (url.pathname === '/api/whale-pet/inject-mood') {
+          const mood = url.searchParams.get('mood') === 'working' ? 'working' : 'idle'
+          petApi.pushItem({ type: 'mood', mood })
+          const body = Buffer.from(JSON.stringify({ ok: true, mood }), 'utf8')
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': String(body.length) })
+          res.end(body)
+          return true
+        }
         // 把渲染进程报来的「可交互矩形」吐出来，便于定位按钮
         if (url.pathname === '/api/whale-pet/rects') {
           const body = Buffer.from(JSON.stringify({ rects: petRects, interactive, forceThrough }), 'utf8')

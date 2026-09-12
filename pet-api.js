@@ -222,6 +222,22 @@ function readKey() {
 
 const redact = (s) => String(s || '').replace(/sk-[A-Za-z0-9]+/g, 'sk-***')
 
+/**
+ * 只取余额总额（充值监测用，不走 HTTP 路由）。
+ * @returns {Promise<{total:number, currency:string}>}
+ */
+async function fetchBalanceTotal() {
+  const key = readKey()
+  const r = await fetch('https://api.deepseek.com/user/balance', {
+    headers: { authorization: 'Bearer ' + key, accept: 'application/json' },
+    signal: AbortSignal.timeout(20000),
+  })
+  if (!r.ok) throw new Error('HTTP ' + r.status)
+  const j = await r.json()
+  const info = (j.balance_infos || [])[0] || {}
+  return { total: Number(info.total_balance || 0), currency: info.currency || 'CNY' }
+}
+
 function createApi(deps) {
   const watcher = createWatcher(deps)
   watcher.start()
@@ -351,4 +367,4 @@ function createApi(deps) {
   return { handle, watcher }
 }
 
-module.exports = { createApi, SETTING_DEFAULTS, pushItem }
+module.exports = { createApi, SETTING_DEFAULTS, pushItem, fetchBalanceTotal }

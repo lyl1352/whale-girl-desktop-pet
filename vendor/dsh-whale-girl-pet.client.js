@@ -303,7 +303,9 @@ window.__ModuleLoader__.load({
 		const WORK_START = '开始工作';
 		const WORK_END = '工作结束';
 		const WORKING = '认真工作';                            // 工作轮播池默认项
-		const WORKING_POOL = ['认真工作', '工作摸鱼', '工作思考', '摸鱼被抓']; // 工作中坐姿→站姿轮播池（运行时探测存在性）
+		const WORKING_POOL = ['认真工作', '工作摸鱼', '工作思考', '摸鱼被抓', '吃小鱼干']; // 工作中坐姿→站姿轮播池（运行时探测存在性）
+		// ↑ 本 fork 唯一一处改动：把「吃小鱼干」并入工作轮播池。
+		//   这样她干活时也会顺手吃根小鱼干，充值到账时直接投喂也不会被工作循环顶掉。
 		const BUSY_CLICK = '工作被打扰'; // 忙时点击：工作中被打扰（惊到→嫌弃→继续工作）
 		const BUSY_LINES = [
 			'正在忙，别摸我啦！',
@@ -2005,6 +2007,10 @@ window.__ModuleLoader__.load({
 					return;
 				}
 				feedAtRef.current = now;
+				// 本 fork：吃东西要独占 —— 先清掉工作轮播定时器，否则吃到一半会被它顶掉。
+				// 吃完后 handleEnded 会看 busyRef：还在工作就 playWorking() 接回工作轮播，
+				// 否则回待机链（吃小鱼干本来就在 INTERRUPT 集合里）。
+				if (workingTimerRef.current) clearTimeout(workingTimerRef.current);
 				setAnim(FEED);
 				setOnce(true);
 				setSeq((s) => s + 1);

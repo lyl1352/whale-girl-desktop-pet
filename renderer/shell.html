@@ -63,6 +63,27 @@
     }
     #petMenu button:hover { background: rgba(46, 92, 184, 0.1); }
     #petMenu button .mark { float: right; color: #2e5cb8; }
+
+    /* 充值到账气泡（外壳自绘，样式跟她的对话气泡一致；不吃鼠标事件） */
+    #rechargeToast {
+      position: fixed;
+      right: 120px;
+      bottom: 300px;
+      z-index: 60;
+      min-width: 190px;
+      max-width: 260px;
+      padding: 9px 13px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.98);
+      border: 1px solid #dbe7fb;
+      box-shadow: 0 8px 28px rgba(20, 40, 90, 0.26);
+      font-family: "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+      pointer-events: none;
+      animation: dsh-pet-pop .25s ease-out;
+    }
+    #rechargeToast .rt-title { font-size: 13px; font-weight: 600; color: #1c2b4a; margin-bottom: 4px; }
+    #rechargeToast .rt-body { font-size: 12px; color: #3b6fd4; line-height: 1.5; }
+    @keyframes dsh-pet-pop { from { opacity: 0; transform: translateY(6px) scale(.96); } to { opacity: 1; transform: none; } }
   </style>
 </head>
 <body>
@@ -204,6 +225,7 @@
       petMenu.appendChild(t);
 
       petMenu.appendChild(menuRow('桌宠设置…（天气城市等）', 'settings'));
+      petMenu.appendChild(menuRow('💰 充值 DeepSeek…', 'topup'));
       var sep1 = document.createElement('div'); sep1.className = 'sep'; petMenu.appendChild(sep1);
       petMenu.appendChild(menuRow('漫游范围', 'roam', st.fullscreenRoam ? '全屏' : '小窗'));
       petMenu.appendChild(menuRow('鼠标穿透', 'clickthrough', st.forceThrough ? '开' : '关'));
@@ -237,6 +259,47 @@
       if (e.target && e.target.closest && e.target.closest('#petMenu')) return;
       hidePetMenu();
     }, true);
+
+    /*
+     * 充值到账：让她吃零食。
+     *
+     * 不碰原版代码 —— 原版侧边第 3 个按钮（🍪 投喂）的行为正是「吃小鱼干 + 开饭！气泡」，
+     * 这里程序化点它一下就行。另外用外壳自己画一个气泡说明到账金额。
+     */
+    function rechargeToast(delta, total) {
+      var el = document.getElementById('rechargeToast');
+      if (el) el.remove();
+      el = document.createElement('div');
+      el.id = 'rechargeToast';
+      var d = (Math.round(delta * 100) / 100).toFixed(2);
+      var t = (Math.round(total * 100) / 100).toFixed(2);
+      el.innerHTML = '<div class="rt-title">💰 充值到账啦！</div>'
+        + '<div class="rt-body">+¥' + d + '　余额 ¥' + t + '</div>'
+        + '<div class="rt-body">（啊呜）谢谢老板，小鱼干真好吃～</div>';
+      document.body.appendChild(el);
+      setTimeout(function () { if (el.parentNode) el.remove(); }, 9000);
+    }
+
+    function playFeedAnim() {
+      var btns = document.querySelectorAll('.wb-stack .wb-btn');
+      if (btns.length < 3) return false;
+      btns[2].click();   // 顺序：☁️天气 💰余额 🍪投喂 📊看板
+      return true;
+    }
+
+    /*
+     * 充值到账 → 投喂。
+     * 直接点出「吃小鱼干」：fork 里让 handleFeed 先清掉工作轮播定时器，
+     * 所以它能完整播完；播完 handleEnded 会自动判断 —— 还在工作就接回工作轮播，
+     * 否则回待机链。外壳这边不需要做任何状态协调。
+     */
+    if (window.petShell && window.petShell.onRecharge) {
+      window.petShell.onRecharge(function (info) {
+        if (!info) return;
+        rechargeToast(Number(info.delta) || 0, Number(info.total) || 0);
+        setTimeout(playFeedAnim, 400);
+      });
+    }
 
     // 把「宠物可交互区域的矩形」报给主进程，用于透明区域的鼠标穿透判断
     // 形如 [类名, left, top, right, bottom]；带类名便于精确定位按钮/气泡
