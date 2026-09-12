@@ -223,8 +223,13 @@ function readKey() {
 const redact = (s) => String(s || '').replace(/sk-[A-Za-z0-9]+/g, 'sk-***')
 
 /**
- * 只取余额总额（充值监测用，不走 HTTP 路由）。
- * @returns {Promise<{total:number, currency:string}>}
+ * 取余额明细（充值监测用，不走 HTTP 路由）。
+ *
+ * 判断「充值到账」必须用 topped（topped_up_balance，实充部分），不能用 total：
+ * 赠送额度刷新也会让 total 变大，那会误判成充值。topped 只在真的充钱时增加，
+ * 用量消耗和赠送刷新都不影响它。
+ *
+ * @returns {Promise<{total:number, topped:number, granted:number, currency:string}>}
  */
 async function fetchBalanceTotal() {
   const key = readKey()
@@ -235,7 +240,12 @@ async function fetchBalanceTotal() {
   if (!r.ok) throw new Error('HTTP ' + r.status)
   const j = await r.json()
   const info = (j.balance_infos || [])[0] || {}
-  return { total: Number(info.total_balance || 0), currency: info.currency || 'CNY' }
+  return {
+    total: Number(info.total_balance || 0),
+    topped: Number(info.topped_up_balance || 0),
+    granted: Number(info.granted_balance || 0),
+    currency: info.currency || 'CNY',
+  }
 }
 
 function createApi(deps) {

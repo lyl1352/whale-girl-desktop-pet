@@ -231,48 +231,81 @@ function setAutostart(on) {
 }
 
 // ---------------------------------------------------------------------------
-// 充值：打开充值页 → 盯余额 → 到账了就让她吃零食
+// 充值：打开充值页 → 盯「实充金额」→ 真的到账了才让她吃零食
 //
-// 不能直接调原版内部函数（都在闭包里），但原版「投喂」按钮的行为正是
-// 「吃小鱼干 + 开饭！气泡」，所以到账时程序化点一下那个按钮即可 —— **不用改原版一行代码**。
-// 额外再用外壳自己画一个气泡说明到账金额。
+// 判据用 topped_up_balance（实充部分），**不是** total_balance：
+//   total 会被赠送额度刷新影响，会误判成充值；
+//   topped 只在真充钱时增加，用量消耗与赠送刷新都不影响它。
+// 检测到增加后再复读一次确认（避免接口抖动误报），确认后才播动画。
+//
+// 动画本身不用改原版：原版「投喂」按钮的行为正是「吃小鱼干」，
+// 程序化点一下即可；外壳额外画一个气泡说明到账金额。
 // ---------------------------------------------------------------------------
 const TOPUP_WATCH_MS = 15 * 60 * 1000   // 最多盯 15 分钟
-const TOPUP_POLL_MS = 20 * 1000         // 每 20 秒查一次余额
+const TOPUP_POLL_MS = 10 * 1000         // 每 10 秒查一次
 let topUpTimer = null
 
 function stopTopUpWatch() {
   if (topUpTimer) { clearInterval(topUpTimer); topUpTimer = null }
 }
 
-async function startTopUp() {
-  shell.openExternal('https://platform.deepseek.com/top_up')
+/**
+ * @param {number} [offsetForTest] 仅调试用：把基准压低这么多，用来在真实链路上验证检测
+ */
+async function startTopUp(offsetForTest) {
   stopTopUpWatch()
-  let baseline
+  let base
   try {
-    baseline = (await petApi.fetchBalanceTotal()).total
+    base = await petApi.fetchBalanceTotal()
   } catch (e) {
     console.log('[whale-pet] topup: 拿不到基准余额（' + ((e && e.message) || e) + '）')
     return
   }
-  console.log('[whale-pet] topup watch start, baseline=' + baseline)
+  const baseline = base.topped - (offsetForTest || 0)
+  console.log('[whale-pet] topup watch start, topped=' + base.topped + ' baseline=' + baseline
+    + ' total=' + base.total)
   const started = Date.now()
+  let confirming = false
   topUpTimer = setInterval(async () => {
     if (Date.now() - started > TOPUP_WATCH_MS) {
       stopTopUpWatch()
       console.log('[whale-pet] topup watch timeout')
       return
     }
+    if (confirming) return
+    let now
     try {
-      const now = (await petApi.fetchBalanceTotal()).total
-      if (now > baseline + 0.009) {
-        const delta = Math.round((now - baseline) * 100) / 100
-        stopTopUpWatch()
-        console.log('[whale-pet] topup detected +' + delta)
-        if (win && !win.isDestroyed()) win.webContents.send('recharge', { delta, total: now })
+      now = await petApi.fetchBalanceTotal()
+    } catch {
+      return // 网络抖动：不算数，下一轮再试
+    }
+    if (!(now.topped > baseline + 0.009)) return
+
+    // 检测到实充增加 —— 复读一次确认，防止接口抖动误报
+    confirming = true
+    try {
+      await new Promise((r) => setTimeout(r, 2500))
+      const again = await petApi.fetchBalanceTotal()
+      if (!(again.topped > baseline + 0.009)) {
+        console.log('[whale-pet] topup: 复读未确认，忽略（' + again.topped + ' vs ' + baseline + '）')
+        confirming = false
+        return
       }
-    } catch { /* 网络抖动忽略，下一轮再试 */ }
+      const delta = Math.round((again.topped - baseline) * 100) / 100
+      stopTopUpWatch()
+      console.log('[whale-pet] topup confirmed +' + delta
+        + '（实充 ' + again.topped + '，总额 ' + again.total + '）')
+      if (win && !win.isDestroyed()) win.webContents.send('recharge', { delta, total: again.total })
+    } catch {
+      confirming = false
+    }
   }, TOPUP_POLL_MS)
+}
+
+/** 菜单入口：打开充值页，再开始盯。 */
+function openTopUpPage() {
+  shell.openExternal('https://platform.deepseek.com/top_up')
+  startTopUp()
 }
 
 // ---------------------------------------------------------------------------
@@ -284,7 +317,7 @@ function menuTemplate() {
     { label: '🐋 鲸鱼娘桌面宠', enabled: false },
     { type: 'separator' },
     { label: '桌宠设置…（天气城市等）', click: () => openSettingsWindow() },
-    { label: '💰 充值 DeepSeek…（到账她会吃零食）', click: () => startTopUp() },
+    { label: '💰 充值 DeepSeek…（到账她会吃零食）', click: () => openTopUpPage() },
     {
       label: '显示 / 隐藏',
       click: () => {
@@ -461,7 +494,7 @@ ipcMain.handle('pet:state', () => ({
 ipcMain.on('pet:action', (_e, name) => {
   switch (name) {
     case 'settings': openSettingsWindow(); break
-    case 'topup': startTopUp(); break
+    case 'topup': openTopUpPage(); break
     case 'roam':
       writeConfig({ roamFullscreen: !fullscreenRoam })
       syncRoamMode()
@@ -506,7 +539,16 @@ app.whenReady().then(async () => {
       // 开发调试钩子：默认关闭，只在 PET_DEV=1 时启用
       // （eval 能在页面里执行任意 JS，公开版本不能默认开着）
       if (process.env.PET_DEV) {
-        // 调试：模拟一次充值到账（走和真实到账完全相同的链路）
+        // 调试：把充值基准压低 offset，走**完全真实的检测链路**（读接口 → 比对 → 复读确认 → 播动画）
+        if (url.pathname === '/api/whale-pet/topup-watch-test') {
+          const off = Number(url.searchParams.get('offset') || 1)
+          startTopUp(off)
+          const body = Buffer.from(JSON.stringify({ ok: true, offset: off }), 'utf8')
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': String(body.length) })
+          res.end(body)
+          return true
+        }
+        // 调试：直接模拟一次到账事件（跳过检测，只测动画链路）
         if (url.pathname === '/api/whale-pet/simulate-recharge') {
           const delta = Number(url.searchParams.get('delta') || 50)
           if (win && !win.isDestroyed()) win.webContents.send('recharge', { delta, total: 100 + delta })
