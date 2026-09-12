@@ -1,0 +1,25 @@
+{
+  "name": "whale-girl-desktop-pet",
+  "version": "1.0.0",
+  "private": true,
+  "description": "把 dsh-whale-girl-pet 的鲸鱼娘桌宠原样搬到 Windows 桌面上：透明置顶浮窗 + 打字机气泡 + 分时段花费看板 + 实时余额",
+  "keywords": [
+    "deepseek",
+    "desktop-pet",
+    "whale-girl",
+    "electron",
+    "windows",
+    "dsh"
+  ],
+  "license": "MIT",
+  "author": "whale-girl-desktop-pet contributors",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "fetch:electron": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/fetch-electron.ps1",
+    "check": "node --check main.js && node --check pet-server.js && node --check pet-api.js && node --check usage-source.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

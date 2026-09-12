@@ -1,0 +1,28 @@
+# 运行时（138MB，用 tools/fetch-electron.ps1 现下）
+electron/
+electron.zip
+
+# 日志与调试产物
+*.log
+snapshot-*.png
+snap-request
+
+# 依赖
+node_modules/
+
+# 系统
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# 本机保险备份（DSH 快捷方式原始参数）
+backup-shortcuts/
+
+# 动画素材：安装时从 npm 拉（tools/fetch-assets.ps1）
+assets/*.webm
+assets/preview-*.gif
+assets/qr-donate.png
+
+# 临时文件
+.commit-message.txt
+

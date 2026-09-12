@@ -1,0 +1,19 @@
+{
+  "name": "dsh-whale-pet-launcher",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DSH 启动时把「鲸鱼娘桌面宠」拉起来，并保持它常驻",
+  "type": "module",
+  "main": "index.js",
+  "license": "MIT",
+  "exports": {
+    ".": "./index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

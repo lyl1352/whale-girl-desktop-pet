@@ -1,0 +1,5 @@
+# 把「鲸鱼娘桌面宠启动器」插进 DSH 配置树。
+# id 是插件行标识；name 是模块名（解析到本包的 index.js）。
+- insert:
+    - id: whale-pet-launcher
+      name: dsh-whale-pet-launcher

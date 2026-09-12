@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>鲸鱼娘桌面宠</title>
+  <style>
+    /* 桌面版外壳：整页透明，宠物由原版 client.js 自己 fixed 定位 */
+    html, body {
+      margin: 0; padding: 0; width: 100%; height: 100%;
+      background: transparent; overflow: hidden;
+    }
+    /*
+     * 补上 DSH 主题变量：原版看板/设置面板用 var(--dsw-*) 取背景、描边、文字色。
+     * 这里必须定义在 :root（不能只在设置视图下），否则看板 background 失效 -> 面板变透明。
+     */
+    :root {
+      --dsw-alias-label-primary: #1c2b4a;
+      --dsw-alias-label-secondary: #55627c;
+      --dsw-alias-label-tertiary: #93a0b8;
+      --dsw-alias-label-primary-inverted: #ffffff;
+      --dsw-alias-border-l1: #e2eaf8;
+      --dsw-alias-border-l2: #d3ddf0;
+      --dsw-alias-border-l4: #c3d0e8;
+      --dsw-alias-separator-primary: #e8eef8;
+      --dsw-alias-state-error-primary: #d9534f;
+      --dsw-alias-interactive-bg-hover: rgba(46, 92, 184, 0.08);
+      --dsw-alias-bg-module-platform: #ffffff;
+      --dsw-specific-menu: #ffffff;
+      --dsw-elevation-prominent: 0 8px 28px rgba(30, 60, 120, 0.22);
+    }
+    /* 设置窗：需要不透明背景 */
+    body.settings-view {
+      background: #f6f9ff;
+      overflow: auto;
+      color: var(--dsw-alias-label-primary);
+      font-family: "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+    }
+    body.settings-view #pet-root { padding: 16px 18px; }
+
+    /* 桌宠右键菜单：自绘 HTML（原生 popup 在 focusable:false 的窗口上不显示，
+       改成 focusable 又会把焦点从 DSH 抢走，所以自己在窗口里画） */
+    #petMenu {
+      position: fixed;
+      z-index: 99;
+      min-width: 168px;
+      padding: 5px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.98);
+      border: 1px solid #dbe7fb;
+      box-shadow: 0 8px 28px rgba(20, 40, 90, 0.28);
+      font-size: 12.5px;
+      color: #1c2b4a;
+      font-family: "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+      user-select: none;
+    }
+    #petMenu.hidden { display: none; }
+    #petMenu .sep { height: 1px; margin: 4px 6px; background: #e8eef8; }
+    #petMenu .title { padding: 5px 10px; color: #93a0b8; font-size: 11px; }
+    #petMenu button {
+      display: block; width: 100%; text-align: left;
+      padding: 6px 10px; border: 0; border-radius: 7px;
+      background: transparent; color: inherit; font: inherit; cursor: pointer;
+    }
+    #petMenu button:hover { background: rgba(46, 92, 184, 0.1); }
+    #petMenu button .mark { float: right; color: #2e5cb8; }
+  </style>
+</head>
+<body>
+  <div id="pet-root"></div>
+  <div id="petMenu" class="hidden"></div>
+
+  <!-- React 18（UMD，本地 vendor） -->
+  <script src="/vendor/react.js"></script>
+  <script src="/vendor/react-dom.js"></script>
+  <script>
+    // ---------------------------------------------------------------------------
+    // 最小 DSH 客户端宿主：只实现原版 client.js 真正用到的东西
+    //   1. window.__ModuleLoader__.load({id, factory})
+    //   2. factory(require) -> require('react' | 'react/jsx-runtime' | 'react-dom')
+    //   3. apply(ctx, config) 里的 ctx.slots / ctx.locale / ctx.effect
+    // ---------------------------------------------------------------------------
+
+    // jsx-runtime 垫片：React 18 自动运行时语义 -> createElement
+    const jsxRuntime = {
+      Fragment: React.Fragment,
+      jsx: function (type, props, key) {
+        const p = Object.assign({}, props);
+        if (key !== undefined) p.key = key;
+        return React.createElement(type, p);
+      },
+      jsxs: function (type, props, key) {
+        const p = Object.assign({}, props);
+        if (key !== undefined) p.key = key;
+        return React.createElement(type, p);
+      },
+    };
+
+    function petRequire(name) {
+      if (name === 'react') return React;
+      if (name === 'react/jsx-runtime') return jsxRuntime;
+      if (name === 'react-dom') return ReactDOM;
+      throw new Error('petRequire: 未提供的模块 ' + name);
+    }
+
+    window.__PET_MODULE__ = null;
+    window.__ModuleLoader__ = {
+      load: function (def) {
+        window.__PET_MODULE__ = def.factory(petRequire);
+      },
+    };
+
+    // 槽位注册收集器
+    const registrations = [];
+    const locales = {};
+    const appConfig = window.__PET_CONFIG__ || { size: 260, position: 'bottom-right' };
+
+    const ctx = {
+      locale: {
+        register: function (ns, dicts) { locales[ns] = dicts; return { ns: ns }; },
+      },
+      effect: function (fn) { try { fn(); } catch (e) { console.warn('[pet] effect 抛错', e); } },
+      slots: {
+        inject: function (slotName, gen) {
+          // 原版用 generator + yield 的叠加式注册；跑完即可拿到注册项
+          try {
+            const it = gen();
+            let r = it.next();
+            while (!r.done) r = it.next();
+          } catch (e) {
+            console.warn('[pet] slots.inject 抛错', slotName, e);
+          }
+        },
+        register: function (spec, component) {
+          registrations.push({ spec: spec, component: component });
+          return { spec: spec };
+        },
+      },
+    };
+
+    window.__PET_MOUNT__ = function (view) {
+      const mod = window.__PET_MODULE__;
+      if (!mod || typeof mod.apply !== 'function') {
+        console.error('[pet] 原版模块未加载');
+        return;
+      }
+      mod.apply(ctx, appConfig);
+
+      const want = view || 'overlay';
+      const slotName = want === 'settings' ? 'settings.section' : 'shell.overlay';
+      const reg = registrations.find(function (r) { return r.spec.name === slotName; });
+      if (!reg) { console.error('[pet] 没拿到槽位注册项: ' + slotName); return; }
+
+      ReactDOM.createRoot(document.getElementById('pet-root')).render(
+        React.createElement(reg.component, {})
+      );
+    };
+  </script>
+
+  <!-- 原版浏览器半侧代码，原样、未改一行 -->
+  <script src="/vendor/dsh-whale-girl-pet.client.js"></script>
+  <script>
+    // 视图选择：默认桌宠本体；?view=settings 渲染原版设置面板（DSH 设置 → 桌宠配置）
+    var view = new URLSearchParams(location.search).get('view') || 'overlay';
+    if (view === 'settings') document.body.classList.add('settings-view');
+    window.__PET_MOUNT__(view);
+
+    /*
+     * 桌宠右键菜单：原版代码不处理右键，这里自己画一个（原生 popup 在
+     * focusable:false 的窗口上不显示，改成 focusable 又会抢 DSH 的焦点）。
+     * 用捕获阶段，避免被原版的处理吃掉。
+     */
+    var petMenu = document.getElementById('petMenu');
+    var menuOpen = false;
+
+    function hidePetMenu() {
+      petMenu.classList.add('hidden');
+      petMenu.innerHTML = '';
+      menuOpen = false;
+    }
+
+    function menuRow(label, act, mark) {
+      var b = document.createElement('button');
+      b.textContent = label;
+      if (mark) {
+        var s = document.createElement('span');
+        s.className = 'mark';
+        s.textContent = mark;
+        b.appendChild(s);
+      }
+      b.addEventListener('click', function () {
+        hidePetMenu();
+        if (window.petShell && window.petShell.action) window.petShell.action(act);
+      });
+      return b;
+    }
+
+    async function showPetMenu(x, y) {
+      var st = {};
+      try { if (window.petShell && window.petShell.getState) st = await window.petShell.getState() || {}; } catch (e) { }
+      petMenu.innerHTML = '';
+      var t = document.createElement('div');
+      t.className = 'title';
+      t.textContent = '🐋 鲸鱼娘桌面宠';
+      petMenu.appendChild(t);
+
+      petMenu.appendChild(menuRow('桌宠设置…（天气城市等）', 'settings'));
+      var sep1 = document.createElement('div'); sep1.className = 'sep'; petMenu.appendChild(sep1);
+      petMenu.appendChild(menuRow('漫游范围', 'roam', st.fullscreenRoam ? '全屏' : '小窗'));
+      petMenu.appendChild(menuRow('鼠标穿透', 'clickthrough', st.forceThrough ? '开' : '关'));
+      petMenu.appendChild(menuRow('开机自启', 'autostart', st.autostart ? '开' : '关'));
+      var sep2 = document.createElement('div'); sep2.className = 'sep'; petMenu.appendChild(sep2);
+      petMenu.appendChild(menuRow('打开 DSH 网页版', 'web'));
+      petMenu.appendChild(menuRow('退出桌宠', 'quit'));
+
+      petMenu.classList.remove('hidden');
+      // 贴边修正：菜单别跑出窗口
+      var w = petMenu.offsetWidth, h = petMenu.offsetHeight;
+      var left = Math.min(x, window.innerWidth - w - 6);
+      var top = Math.min(y, window.innerHeight - h - 6);
+      petMenu.style.left = Math.max(6, left) + 'px';
+      petMenu.style.top = Math.max(6, top) + 'px';
+      menuOpen = true;
+    }
+
+    document.addEventListener('contextmenu', function (e) {
+      var el = e.target;
+      if (!el || !el.closest) return;
+      if (!el.closest('.dsh-pet-root, .dsh-pet-video, .wb-stack, .dsh-pet-bubble')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      showPetMenu(e.clientX, e.clientY);
+    }, true);
+
+    // 点别处就收起来
+    document.addEventListener('mousedown', function (e) {
+      if (!menuOpen) return;
+      if (e.target && e.target.closest && e.target.closest('#petMenu')) return;
+      hidePetMenu();
+    }, true);
+
+    // 把「宠物可交互区域的矩形」报给主进程，用于透明区域的鼠标穿透判断
+    // 形如 [类名, left, top, right, bottom]；带类名便于精确定位按钮/气泡
+    setInterval(function () {
+      if (view !== 'overlay') return;
+      const boxes = [];
+      document.querySelectorAll('.dsh-pet-video, .wb-stack, .dsh-pet-bubble').forEach(function (el) {
+        const r = el.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) {
+          boxes.push([String(el.className || ''), r.left, r.top, r.right, r.bottom]);
+        }
+      });
+      // 按钮堆里的每个按钮单独上报，点起来更准
+      document.querySelectorAll('.wb-stack .wb-btn').forEach(function (el) {
+        const r = el.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) {
+          boxes.push(['wb-btn', r.left, r.top, r.right, r.bottom]);
+        }
+      });
+      // 右键菜单展开时也要可点
+      if (menuOpen) {
+        const r = petMenu.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) boxes.push(['pet-menu', r.left, r.top, r.right, r.bottom]);
+      }
+      if (window.petShell && window.petShell.reportRects) window.petShell.reportRects(boxes);
+    }, 250);
+  </script>
+</body>
+</html>

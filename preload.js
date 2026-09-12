@@ -1,0 +1,27 @@
+const { contextBridge, ipcRenderer } = require('electron')
+
+contextBridge.exposeInMainWorld('pet', {
+  listAnimations: () => ipcRenderer.invoke('animations'),
+  getBalance: () => ipcRenderer.invoke('balance'),
+  getWeather: () => ipcRenderer.invoke('weather'),
+  weather: () => ipcRenderer.invoke('weather'),
+  feed: () => ipcRenderer.invoke('feed'),
+  getConfig: () => ipcRenderer.invoke('config'),
+  setConfig: (patch) => ipcRenderer.invoke('setConfig', patch),
+  getUsage: () => ipcRenderer.invoke('usage'),
+  getActivity: () => ipcRenderer.invoke('activity'),
+  openDashboard: () => ipcRenderer.send('dashboard:open'),
+  walk: (dx, ms) => ipcRenderer.invoke('walk', dx, ms),
+  dragStart: () => ipcRenderer.send('drag:start'),
+  dragMove: () => ipcRenderer.send('drag:move'),
+  dragEnd: () => ipcRenderer.send('drag:end'),
+  setClickThrough: (on) => ipcRenderer.send('clickthrough', on),
+  onHotZone: (cb) => ipcRenderer.on('hotzone', (_e, on) => cb(on)),
+  resize: (w, h) => ipcRenderer.send('resize', { w, h }),
+  quit: () => ipcRenderer.send('quit'),
+  openMenu: () => ipcRenderer.send('menu'),
+  onAction: (cb) => ipcRenderer.on('action', (_e, a) => cb(a)),
+  onClickThrough: (cb) => ipcRenderer.on('clickthrough', (_e, on) => cb(on)),
+  onHint: (cb) => ipcRenderer.on('hint', (_e, t) => cb(t)),
+  onAgent: (cb) => ipcRenderer.on('agent', (_e, ev) => cb(ev)),
+})
