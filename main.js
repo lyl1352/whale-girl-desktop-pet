@@ -243,6 +243,10 @@ function setAutostart(on) {
 // ---------------------------------------------------------------------------
 const TOPUP_WATCH_MS = 15 * 60 * 1000   // 最多盯 15 分钟
 const TOPUP_POLL_MS = 10 * 1000         // 每 10 秒查一次
+// 菜单里的「DeepSeek 官网」入口。
+// 注：之前这里指向 http://127.0.0.1:43120（DSH 桌面端自己的 GUI 服务），
+// 那个服务带"浏览器信任围栏"，普通浏览器打开一律 403，所以改成官网。
+const DEEPSEEK_SITE = 'https://www.deepseek.com'
 let topUpTimer = null
 
 function stopTopUpWatch() {
@@ -343,7 +347,7 @@ function menuTemplate() {
     { label: '鼠标穿透开关（' + HOTKEY.replace('CommandOrControl', 'Ctrl') + '）', click: () => toggleClickThrough() },
     { type: 'separator' },
     { label: '开机自启（含守护，掉线自动拉起）', type: 'checkbox', checked: autostartOn(), click: () => setAutostart(!autostartOn()) },
-    { label: '打开 DSH 网页版', click: () => shell.openExternal('http://127.0.0.1:43120') },
+    { label: '🌐 DeepSeek 官网', click: () => shell.openExternal(DEEPSEEK_SITE) },
     { type: 'separator' },
     { label: '退出桌宠', click: () => app.quit() },
   ]
@@ -516,7 +520,7 @@ ipcMain.on('pet:action', (_e, name) => {
       break
     case 'clickthrough': toggleClickThrough(); break
     case 'autostart': setAutostart(!autostartOn()); break
-    case 'web': shell.openExternal('http://127.0.0.1:43120'); break
+    case 'web': shell.openExternal(DEEPSEEK_SITE); break
     case 'quit': app.quit(); break
     default: break
   }
