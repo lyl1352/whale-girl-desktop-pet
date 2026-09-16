@@ -189,40 +189,44 @@ function syncRoamMode() {
 }
 
 // ---------------------------------------------------------------------------
-// 开机自启：启动文件夹放一个 .cmd 拉起守护脚本，守护脚本负责把桌宠拉起来并看住
+// 开机自启
+//
+// ⚠️ 历史教训：最早这里是「启动文件夹放一个 .cmd → 用 powershell.exe
+//    -ExecutionPolicy Bypass -WindowStyle Hidden 拉起 watchdog.ps1」。
+//    这套组合是杀软启发式里最经典的恶意特征（启动项 + 隐藏 PowerShell），
+//    实测被火绒直接删掉了开机项，而且守护进程每次启动都被按掉。
+//
+// 现在改成用 Electron 自带的 shell.writeShortcutLink 生成一个 .lnk，
+// 直接指向 electron.exe —— 启动链上完全没有 PowerShell。
+// 崩溃自愈交给 DSH 端那个启动插件（DSH 启动时拉起 + 每分钟确认），
+// watchdog.ps1 仅保留在仓库里供手动使用。
 // ---------------------------------------------------------------------------
 const STARTUP_DIR = path.join(
   process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'),
   'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup',
 )
-const STARTUP_FILE = path.join(STARTUP_DIR, '鲸鱼娘桌面宠.cmd')
-const WATCHDOG = path.join(__dirname, 'watchdog.ps1')
-// 必须 ASCII：cmd.exe 按 ANSI 解析这个文件
-const STARTUP_CMD = [
-  '@echo off',
-  'rem Auto-start the whale-girl desktop pet via its watchdog.',
-  'start "" powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + WATCHDOG + '"',
-  '',
-].join('\r\n')
+const STARTUP_LNK = path.join(STARTUP_DIR, '鲸鱼娘桌面宠.lnk')
+const LEGACY_STARTUP_CMD = path.join(STARTUP_DIR, '鲸鱼娘桌面宠.cmd')
 
 function autostartOn() {
-  try { return fs.existsSync(STARTUP_FILE) } catch { return false }
+  try { return fs.existsSync(STARTUP_LNK) } catch { return false }
 }
 function setAutostart(on) {
   try {
+    fs.mkdirSync(STARTUP_DIR, { recursive: true })
     if (on) {
-      fs.mkdirSync(STARTUP_DIR, { recursive: true })
-      fs.writeFileSync(STARTUP_FILE, STARTUP_CMD, 'utf8')
-      // 立刻拉起守护进程，不用等下次登录
-      const c = require('node:child_process').spawn(
-        'powershell.exe',
-        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', WATCHDOG],
-        { detached: true, stdio: 'ignore', windowsHide: true },
-      )
-      c.unref()
+      const ok = shell.writeShortcutLink(STARTUP_LNK, 'create', {
+        target: process.execPath,                  // electron.exe
+        args: '"' + __dirname + '"',
+        cwd: __dirname,
+        description: '鲸鱼娘桌面宠',
+      })
+      if (!ok) throw new Error('writeShortcutLink 返回 false')
     } else {
-      fs.rmSync(STARTUP_FILE, { force: true })
+      fs.rmSync(STARTUP_LNK, { force: true })
     }
+    // 老版本留下的 .cmd 一并清掉
+    try { fs.rmSync(LEGACY_STARTUP_CMD, { force: true }) } catch { /* ignore */ }
     console.log('[whale-pet] autostart=' + on)
   } catch (e) {
     console.log('[whale-pet] autostart failed: ' + (e && e.message))
@@ -346,7 +350,7 @@ function menuTemplate() {
     },
     { label: '鼠标穿透开关（' + HOTKEY.replace('CommandOrControl', 'Ctrl') + '）', click: () => toggleClickThrough() },
     { type: 'separator' },
-    { label: '开机自启（含守护，掉线自动拉起）', type: 'checkbox', checked: autostartOn(), click: () => setAutostart(!autostartOn()) },
+    { label: '开机自启', type: 'checkbox', checked: autostartOn(), click: () => setAutostart(!autostartOn()) },
     { label: '🌐 DeepSeek 官网', click: () => shell.openExternal(DEEPSEEK_SITE) },
     { type: 'separator' },
     { label: '退出桌宠', click: () => app.quit() },

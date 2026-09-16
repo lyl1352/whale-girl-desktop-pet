@@ -234,9 +234,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/fetch-electron.ps1
 
 | 机制 | 触发时机 | 说明 |
 |---|---|---|
-| **开机自启** | 登录 Windows | 启动文件夹里的 `.cmd` 拉起守护脚本 |
-| **守护进程** `watchdog.ps1` | 常驻 | 每 20 秒检查，桌宠不在就拉起来 |
+| **开机自启** | 登录 Windows | 启动文件夹里一个 `.lnk`，**直接指向 `electron.exe`** |
 | **DSH 启动插件** `dsh-plugin/` | 启动 DSH | DSH 一起来就把桌宠拉起，之后每分钟确认 |
+| **守护脚本** `watchdog.ps1` | 手动（可选） | 每 20 秒检查，桌宠不在就拉起来 |
 
 安装 DSH 插件（可选，但推荐）：
 
@@ -244,8 +244,23 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/fetch-electron.ps1
 dsh plugin --profile desktop add <本仓库路径>\dsh-plugin
 ```
 
-> 为什么需要插件？因为 DSH 重启会把它派生的进程一起杀掉（桌宠和守护都会被带走）。
+> 为什么需要插件？因为 DSH 重启会把它派生的进程一起杀掉，桌宠也会被带走。
 > 由 DSH 自己启动桌宠，就能保证「打开 DSH，她就在」。
+
+> ⚠️ **杀软误报（踩过的坑）**：开机自启最早写的是「启动文件夹放一个 `.cmd` →
+> 用 `powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden` 拉起 `watchdog.ps1`」。
+> 这套组合是杀软启发式里最经典的恶意特征（**启动项 + 隐藏 PowerShell**），
+> 实测被 **火绒** 直接删掉了开机项，而且守护进程每次启动都被按掉。
+>
+> 现在开机自启用 `shell.writeShortcutLink` 生成 `.lnk` **直接指向 `electron.exe`**，
+> 启动链上完全没有 PowerShell；崩溃自愈交给 DSH 插件。`watchdog.ps1` 保留在仓库里，
+> 需要时手动跑。
+
+> **如果杀软仍然误报**，把整个仓库目录加进信任区即可
+> （火绒：`防护中心 → 信任区 → 添加目录`）：
+> ```
+> C:\Users\PC\whale-pet-desktop
+> ```
 
 > **守护脚本的一个坑**：上一个守护被强杀时，全局互斥量会进入 `abandoned` 状态，
 > 此时 .NET 的 `Mutex.WaitOne` 会**抛 `AbandonedMutexException`** 而不是返回 `false`。
@@ -266,7 +281,7 @@ dsh plugin --profile desktop add <本仓库路径>\dsh-plugin
 
 ## ⚠️ 已知限制
 
-- **只支持 Windows**（依赖 PowerShell 守护脚本与 Windows 启动文件夹）
+- **只支持 Windows**（依赖 Windows 启动文件夹与 `.lnk`）
 - 首次运行需要下载 Electron（约 140MB）
 - 设置面板是从右键/托盘打开的**独立窗口**（网页版它是 DSH 设置页里的一节）
 - 动画素材是 **360×360**（上游仓库与 Release 里只有这一档，没有更高清版本）。
