@@ -24,7 +24,8 @@ const EXE = join(APP_DIR, 'electron', 'electron.exe')
 const LOG_DIR = join(homedir(), '.whale-pet-desktop')
 const LOG = join(LOG_DIR, 'launcher.log')
 const GAME_MARK = join(LOG_DIR, 'game-running.json')
-const MAX_SUPPRESS_MS = 6 * 60 * 60 * 1000   // 兜底：超过 6 小时不再抑制（防 PID 复用卡死）
+const MAX_SUPPRESS_MS = 2 * 60 * 60 * 1000   // 兜底：超过 2 小时不再抑制（防 PID 复用/误判卡死）
+// 之所以敢设这么短：桌宠现在启动时先检查再显示，游戏期间被拉起也不会闪一下
 
 function log(msg) {
   try {

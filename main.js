@@ -241,7 +241,38 @@ function initFullscreenProbe() {
     const GetMonitorInfoW = user32.func('bool GetMonitorInfoW(void* mon, _Inout_ WhalePetMonitorInfo* mi)')
     const GetWindowThreadProcessId = user32.func('uint32 GetWindowThreadProcessId(void* h, _Out_ uint32* pid)')
     const IsZoomed = user32.func('bool IsZoomed(void* h)')
+    const GetClassNameW = user32.func('int GetClassNameW(void* h, _Out_ uint16_t* buf, int n)')
+    const kernel32 = koffi.load('kernel32.dll')
+    const OpenProcess = kernel32.func('void* OpenProcess(uint32 access, bool inherit, uint32 pid)')
+    const QueryFullProcessImageNameW = kernel32.func('bool QueryFullProcessImageNameW(void* h, uint32 flags, _Out_ uint16_t* buf, _Inout_ uint32* size)')
+    const CloseHandle = kernel32.func('bool CloseHandle(void* h)')
     const miSize = koffi.sizeof(MONITORINFO)
+
+    // 桌面 / 任务栏这些 shell 窗口必须排除：游戏退出后前台会短暂落到桌面
+    // （Progman / WorkerW），它铺满屏幕又不是最大化，会被误判成"全屏游戏"。
+    // 而 explorer 是常驻进程 —— 一旦被记进抑制标记，桌宠就再也回不来了（实测踩过）。
+    const SHELL_CLASSES = new Set(['Progman', 'WorkerW', 'Shell_TrayWnd', 'Shell_SecondaryTrayWnd', 'Button', 'SysListView32'])
+
+    const classNameOf = (h) => {
+      const b = new Uint16Array(256)
+      const n = GetClassNameW(h, b, 256)
+      let s = ''
+      for (let i = 0; i < n; i++) s += String.fromCharCode(b[i])
+      return s
+    }
+    const procPathOfPid = (pid) => {
+      if (!pid) return ''
+      const ph = OpenProcess(0x1000, false, pid)   // PROCESS_QUERY_LIMITED_INFORMATION
+      if (!ph) return ''
+      try {
+        const buf = new Uint16Array(1024)
+        const size = [1024]
+        if (!QueryFullProcessImageNameW(ph, 0, buf, size)) return ''
+        let s = ''
+        for (let i = 0; i < size[0]; i++) s += String.fromCharCode(buf[i])
+        return s
+      } finally { CloseHandle(ph) }
+    }
 
     const own = new Set()
     const collectOwn = () => {
@@ -267,6 +298,8 @@ function initFullscreenProbe() {
         if (!IsWindowVisible(h)) return no
         collectOwn()
         if (own.has(String(h))) return no          // 别把自己判成全屏
+        // shell 窗口（桌面/任务栏）不是游戏
+        if (SHELL_CLASSES.has(classNameOf(h))) return no
         // 【关键】排除"最大化"窗口。
         // DSH 自己是无边框最大化窗口，矩形 -13,-13-3853,2173 同样铺满显示器，
         // 光看"完全覆盖"会把它当成全屏游戏 —— 实测就是这样误判的，结果记下了
@@ -284,6 +317,9 @@ function initFullscreenProbe() {
         if (!full) return no
         const pid = [0]
         GetWindowThreadProcessId(h, pid)
+        // explorer 也不算（桌面/任务栏的宿主进程，常驻）
+        const p = procPathOfPid(pid[0] || 0).toLowerCase()
+        if (p.endsWith('\\explorer.exe')) return no
         return { full: true, pid: pid[0] || 0 }
       },
       isForegroundFullscreen() {
