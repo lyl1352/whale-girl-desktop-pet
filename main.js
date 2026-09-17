@@ -295,15 +295,19 @@ function autoHideEnabled() {
 
 function applyFullscreenState(full) {
   if (!win || win.isDestroyed()) return
-  if (full && !fullscreenHidden) {
-    fullscreenHidden = true
-    win.hide()
-    console.log('[whale-pet] 检测到全屏程序 -> 隐藏桌宠')
-  } else if (!full && fullscreenHidden) {
+  if (full) {
+    if (!fullscreenHidden) {
+      fullscreenHidden = true
+      console.log('[whale-pet] 检测到全屏程序 -> 隐藏桌宠')
+    }
+    // 每次轮询都确保是隐藏的：ready-to-show、托盘「显示」等都可能把她又 show 回来
+    if (win.isVisible()) win.hide()
+  } else if (fullscreenHidden) {
     fullscreenHidden = false
     win.showInactive()
     win.setAlwaysOnTop(true, 'screen-saver')
     console.log('[whale-pet] 全屏结束 -> 显示桌宠')
+    applyWindowBounds()
   }
 }
 
@@ -622,7 +626,12 @@ function createWindow(origin) {
     const q = Number.isFinite(s) && s > 0 ? '?size=' + Math.round(s) : ''
     win.loadURL(origin + '/' + q)
   }
-  win.once('ready-to-show', () => { win.showInactive(); applyWindowBounds() })
+  // 注意：这里必须尊重「全屏自动隐藏」的判定 —— 否则窗口加载完才触发的
+  // ready-to-show 会把刚 hide 掉的她 again showInactive 回来（压在全屏游戏上）。
+  win.once('ready-to-show', () => {
+    applyWindowBounds()
+    if (!fullscreenHidden) win.showInactive()
+  })
   win.webContents.on('did-finish-load', () => {
     win.webContents.send('hint', 'ready')
   })
@@ -795,6 +804,14 @@ app.whenReady().then(async () => {
   setupShortcut()
   syncRoamMode()
   startFullscreenWatch()
+  // 独占全屏游戏会改显示分辨率（实测 Forza 会把 3840x2160 改成 1920x1080）。
+  // 那种情况下窗口位置会失效、光标也够不到宠物（表现为"拖不动"），
+  // 所以显示参数一变就重算窗口位置。
+  screen.on('display-metrics-changed', () => {
+    applyWindowBounds()
+    petRects = []
+    syncInteractive()
+  })
   rectTimer = setInterval(syncInteractive, 60)
 
   // 调试用：创建 ~/.whale-pet-desktop/snap-request 即截图一次（透明浮窗系统截图抓不到）
