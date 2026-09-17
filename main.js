@@ -239,6 +239,7 @@ function initFullscreenProbe() {
     const GetWindowRect = user32.func('bool GetWindowRect(void* h, _Out_ WhalePetRect* r)')
     const MonitorFromWindow = user32.func('void* MonitorFromWindow(void* h, uint32 flags)')
     const GetMonitorInfoW = user32.func('bool GetMonitorInfoW(void* mon, _Inout_ WhalePetMonitorInfo* mi)')
+    const GetWindowThreadProcessId = user32.func('uint32 GetWindowThreadProcessId(void* h, _Out_ uint32* pid)')
     const miSize = koffi.sizeof(MONITORINFO)
 
     const own = new Set()
@@ -268,6 +269,25 @@ function initFullscreenProbe() {
         const m = mi.rcMonitor
         return r.left <= m.left && r.top <= m.top && r.right >= m.right && r.bottom >= m.bottom
       },
+      /** 前台全屏程序所属进程的 PID（没检测到就返回 0）。 */
+      fullscreenAppPid() {
+        const h = GetForegroundWindow()
+        if (!h || !IsWindowVisible(h)) return 0
+        collectOwn()
+        if (own.has(String(h))) return 0
+        const r = {}
+        if (!GetWindowRect(h, r)) return 0
+        const mon = MonitorFromWindow(h, 2)
+        if (!mon) return 0
+        const mi = { cbSize: miSize }
+        if (!GetMonitorInfoW(mon, mi)) return 0
+        const m = mi.rcMonitor
+        const covers = r.left <= m.left && r.top <= m.top && r.right >= m.right && r.bottom >= m.bottom
+        if (!covers) return 0
+        const pid = [0]
+        GetWindowThreadProcessId(h, pid)
+        return pid[0] || 0
+      },
       /** 诊断用：把最近一次探测的原始数据描述出来 */
       describe() {
         const h = GetForegroundWindow()
@@ -293,16 +313,48 @@ function autoHideEnabled() {
   return readConfig().autoHideFullscreen !== false   // 默认开
 }
 
+/**
+ * 全屏时的动作：
+ *   'quit' 退出桌宠（默认）—— 真的释放内存，玩游戏时不占资源
+ *   'hide' 只隐藏窗口
+ *   'off'  什么都不做
+ */
+function fullscreenAction() {
+  const a = readConfig().fullscreenAction
+  if (a === 'hide' || a === 'off' || a === 'quit') return a
+  return autoHideEnabled() ? 'quit' : 'off'   // 兼容旧配置
+}
+
+// 退出前写这个标记：DSH 那个启动插件每 60 秒会确认一次"桌宠在不在"，
+// 不标记的话她会立刻被拉回来。插件读它、发现游戏进程还活着就跳过。
+const GAME_MARK = path.join(CONF_DIR, 'game-running.json')
+
 function applyFullscreenState(full) {
   if (!win || win.isDestroyed()) return
-  if (full) {
+  const action = fullscreenAction()
+  if (full && action === 'quit') {
+    if (fullscreenHidden) return
+    fullscreenHidden = true
+    let pid = 0
+    try { pid = fsProbe && fsProbe.fullscreenAppPid ? fsProbe.fullscreenAppPid() : 0 } catch { /* ignore */ }
+    try {
+      fs.mkdirSync(CONF_DIR, { recursive: true })
+      fs.writeFileSync(GAME_MARK, JSON.stringify({ pid, at: Date.now() }), 'utf8')
+    } catch { /* ignore */ }
+    console.log('[whale-pet] 检测到全屏程序（pid=' + pid + '）-> 退出桌宠')
+    app.quit()
+    return
+  }
+  if (full && action === 'hide') {
     if (!fullscreenHidden) {
       fullscreenHidden = true
       console.log('[whale-pet] 检测到全屏程序 -> 隐藏桌宠')
     }
     // 每次轮询都确保是隐藏的：ready-to-show、托盘「显示」等都可能把她又 show 回来
     if (win.isVisible()) win.hide()
-  } else if (fullscreenHidden) {
+    return
+  }
+  if (!full && fullscreenHidden) {
     fullscreenHidden = false
     win.showInactive()
     win.setAlwaysOnTop(true, 'screen-saver')
@@ -493,12 +545,12 @@ function menuTemplate() {
     { type: 'separator' },
     { label: '开机自启', type: 'checkbox', checked: autostartOn(), click: () => setAutostart(!autostartOn()) },
     {
-      label: '全屏游戏时自动隐藏',
+      label: '全屏游戏时自动退出',
       type: 'checkbox',
-      checked: autoHideEnabled(),
+      checked: fullscreenAction() === 'quit',
       enabled: !!getFsProbe(),
       click: () => {
-        writeConfig({ autoHideFullscreen: !autoHideEnabled() })
+        writeConfig({ fullscreenAction: fullscreenAction() === 'quit' ? 'off' : 'quit' })
         if (getFsProbe() && !fullscreenTimer) startFullscreenWatch()
         buildTrayMenu()
       },
@@ -797,6 +849,9 @@ app.whenReady().then(async () => {
     fs.mkdirSync(CONF_DIR, { recursive: true })
     fs.writeFileSync(path.join(CONF_DIR, 'origin.txt'), server.origin, 'utf8')
   } catch { /* ignore */ }
+
+  // 正常启动了就把「因游戏退出」的抑制标记清掉（不然 DSH 启动插件会一直不拉她）
+  try { fs.rmSync(GAME_MARK, { force: true }) } catch { /* ignore */ }
 
   createWindow(server.origin)
   if (process.env.PET_OPEN_SETTINGS) setTimeout(() => openSettingsWindow(), 1500)
