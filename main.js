@@ -330,18 +330,23 @@ function fullscreenAction() {
 // 不标记的话她会立刻被拉回来。插件读它、发现游戏进程还活着就跳过。
 const GAME_MARK = path.join(CONF_DIR, 'game-running.json')
 
+/** 因为全屏游戏而退出：写抑制标记 + 退出（窗口一次都不该显示）。 */
+function quitForGame(pid) {
+  try {
+    fs.mkdirSync(CONF_DIR, { recursive: true })
+    fs.writeFileSync(GAME_MARK, JSON.stringify({ pid: pid || 0, at: Date.now() }), 'utf8')
+  } catch { /* ignore */ }
+  console.log('[whale-pet] 检测到全屏程序（pid=' + (pid || 0) + '）-> 退出桌宠')
+  app.quit()
+}
+
 function applyFullscreenState(full, pid) {
   if (!win || win.isDestroyed()) return
   const action = fullscreenAction()
   if (full && action === 'quit') {
     if (fullscreenHidden) return
     fullscreenHidden = true
-    try {
-      fs.mkdirSync(CONF_DIR, { recursive: true })
-      fs.writeFileSync(GAME_MARK, JSON.stringify({ pid: pid || 0, at: Date.now() }), 'utf8')
-    } catch { /* ignore */ }
-    console.log('[whale-pet] 检测到全屏程序（pid=' + (pid || 0) + '）-> 退出桌宠')
-    app.quit()
+    quitForGame(pid)
     return
   }
   if (full && action === 'hide') {
@@ -677,10 +682,20 @@ function createWindow(origin) {
     const q = Number.isFinite(s) && s > 0 ? '?size=' + Math.round(s) : ''
     win.loadURL(origin + '/' + q)
   }
-  // 注意：这里必须尊重「全屏自动隐藏」的判定 —— 否则窗口加载完才触发的
+  // 注意：这里必须尊重「全屏自动退出」的判定 —— 否则窗口加载完才触发的
   // ready-to-show 会把刚 hide 掉的她 again showInactive 回来（压在全屏游戏上）。
+  // 而且要**先检查再显示**：否则她会先闪出来一下、等 2 秒后的轮询才发现游戏再退出。
   win.once('ready-to-show', () => {
     applyWindowBounds()
+    try {
+      const probe = getFsProbe()
+      const r = probe ? probe.inspect() : { full: false, pid: 0 }
+      if (r.full && fullscreenAction() === 'quit') {
+        fullscreenHidden = true
+        quitForGame(r.pid)
+        return
+      }
+    } catch { /* 探测失败就当没全屏，正常显示 */ }
     if (!fullscreenHidden) win.showInactive()
   })
   win.webContents.on('did-finish-load', () => {
