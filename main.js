@@ -240,6 +240,7 @@ function initFullscreenProbe() {
     const MonitorFromWindow = user32.func('void* MonitorFromWindow(void* h, uint32 flags)')
     const GetMonitorInfoW = user32.func('bool GetMonitorInfoW(void* mon, _Inout_ WhalePetMonitorInfo* mi)')
     const GetWindowThreadProcessId = user32.func('uint32 GetWindowThreadProcessId(void* h, _Out_ uint32* pid)')
+    const IsZoomed = user32.func('bool IsZoomed(void* h)')
     const miSize = koffi.sizeof(MONITORINFO)
 
     const own = new Set()
@@ -254,39 +255,39 @@ function initFullscreenProbe() {
     }
 
     return {
-      isForegroundFullscreen() {
+      /**
+       * 一次探测拿齐「是不是全屏」和「是全屏的话属于哪个进程」。
+       * 必须一次拿完 —— 分两次调用会有竞态：第一次看到游戏全屏，等第二次调用时
+       * 前台可能已经换成别的程序，于是记下错误的 PID，插件就会一直以为游戏还在。
+       */
+      inspect() {
+        const no = { full: false, pid: 0 }
         const h = GetForegroundWindow()
-        if (!h) return false
-        if (!IsWindowVisible(h)) return false
+        if (!h) return no
+        if (!IsWindowVisible(h)) return no
         collectOwn()
-        if (own.has(String(h))) return false          // 别把自己判成全屏
+        if (own.has(String(h))) return no          // 别把自己判成全屏
+        // 【关键】排除"最大化"窗口。
+        // DSH 自己是无边框最大化窗口，矩形 -13,-13-3853,2173 同样铺满显示器，
+        // 光看"完全覆盖"会把它当成全屏游戏 —— 实测就是这样误判的，结果记下了
+        // DSH 的 PID，启动插件会以为游戏永远在跑，桌宠再也回不来。
+        // 实测对照：Forza 全屏窗口 IsZoomed=false，DSH 最大化窗口 IsZoomed=true。
+        if (IsZoomed(h)) return no
         const r = {}
-        if (!GetWindowRect(h, r)) return false
-        const mon = MonitorFromWindow(h, 2)           // MONITOR_DEFAULTTONEAREST
-        if (!mon) return false
+        if (!GetWindowRect(h, r)) return no
+        const mon = MonitorFromWindow(h, 2)        // MONITOR_DEFAULTTONEAREST
+        if (!mon) return no
         const mi = { cbSize: miSize }
-        if (!GetMonitorInfoW(mon, mi)) return false
+        if (!GetMonitorInfoW(mon, mi)) return no
         const m = mi.rcMonitor
-        return r.left <= m.left && r.top <= m.top && r.right >= m.right && r.bottom >= m.bottom
-      },
-      /** 前台全屏程序所属进程的 PID（没检测到就返回 0）。 */
-      fullscreenAppPid() {
-        const h = GetForegroundWindow()
-        if (!h || !IsWindowVisible(h)) return 0
-        collectOwn()
-        if (own.has(String(h))) return 0
-        const r = {}
-        if (!GetWindowRect(h, r)) return 0
-        const mon = MonitorFromWindow(h, 2)
-        if (!mon) return 0
-        const mi = { cbSize: miSize }
-        if (!GetMonitorInfoW(mon, mi)) return 0
-        const m = mi.rcMonitor
-        const covers = r.left <= m.left && r.top <= m.top && r.right >= m.right && r.bottom >= m.bottom
-        if (!covers) return 0
+        const full = r.left <= m.left && r.top <= m.top && r.right >= m.right && r.bottom >= m.bottom
+        if (!full) return no
         const pid = [0]
         GetWindowThreadProcessId(h, pid)
-        return pid[0] || 0
+        return { full: true, pid: pid[0] || 0 }
+      },
+      isForegroundFullscreen() {
+        return this.inspect().full
       },
       /** 诊断用：把最近一次探测的原始数据描述出来 */
       describe() {
@@ -329,19 +330,17 @@ function fullscreenAction() {
 // 不标记的话她会立刻被拉回来。插件读它、发现游戏进程还活着就跳过。
 const GAME_MARK = path.join(CONF_DIR, 'game-running.json')
 
-function applyFullscreenState(full) {
+function applyFullscreenState(full, pid) {
   if (!win || win.isDestroyed()) return
   const action = fullscreenAction()
   if (full && action === 'quit') {
     if (fullscreenHidden) return
     fullscreenHidden = true
-    let pid = 0
-    try { pid = fsProbe && fsProbe.fullscreenAppPid ? fsProbe.fullscreenAppPid() : 0 } catch { /* ignore */ }
     try {
       fs.mkdirSync(CONF_DIR, { recursive: true })
-      fs.writeFileSync(GAME_MARK, JSON.stringify({ pid, at: Date.now() }), 'utf8')
+      fs.writeFileSync(GAME_MARK, JSON.stringify({ pid: pid || 0, at: Date.now() }), 'utf8')
     } catch { /* ignore */ }
-    console.log('[whale-pet] 检测到全屏程序（pid=' + pid + '）-> 退出桌宠')
+    console.log('[whale-pet] 检测到全屏程序（pid=' + (pid || 0) + '）-> 退出桌宠')
     app.quit()
     return
   }
@@ -369,12 +368,12 @@ function startFullscreenWatch() {
   if (!fsProbe) return
   fullscreenTimer = setInterval(() => {
     try {
-      const full = autoHideEnabled() && fsProbe.isForegroundFullscreen()
+      const r = fsProbe.inspect()                 // 一次拿齐 full + pid
       if (process.env.PET_DEV) {
         const d = fsProbe.describe ? fsProbe.describe() : ''
         if (d !== lastFsDescribe) { lastFsDescribe = d; console.log('[whale-pet] fs: ' + d) }
       }
-      applyFullscreenState(full)
+      applyFullscreenState(r.full, r.pid)
     } catch (e) {
       if (process.env.PET_DEV) console.log('[whale-pet] fs poll error: ' + (e && e.message))
     }
