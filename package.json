@@ -2,7 +2,7 @@
   "name": "whale-girl-desktop-pet",
   "version": "1.0.0",
   "private": true,
-  "description": "把 dsh-whale-girl-pet 的鲸鱼娘桌宠原样搬到 Windows 桌面上：透明置顶浮窗 + 打字机气泡 + 分时段花费看板 + 实时余额",
+  "description": "把 dsh-whale-girl-pet 的鲸鱼娘原样搬到 Windows 桌面上：透明置顶浮窗 + 打字机气泡 + 分时段花费看板 + 实时余额",
   "keywords": [
     "deepseek",
     "desktop-pet",
@@ -17,7 +17,11 @@
   "scripts": {
     "start": "electron .",
     "fetch:electron": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/fetch-electron.ps1",
+    "fetch:assets": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/fetch-assets.ps1",
     "check": "node --check main.js && node --check pet-server.js && node --check pet-api.js && node --check usage-source.js"
+  },
+  "optionalDependencies": {
+    "koffi": "^3.3.0"
   },
   "engines": {
     "node": ">=18"

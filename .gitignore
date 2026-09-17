@@ -33,3 +33,7 @@ assets/qr-donate.png
 # 本机工作约定备注
 .workflow-note.txt
 
+
+# npm 依赖（koffi：全屏检测用）
+node_modules/
+

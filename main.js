@@ -189,6 +189,143 @@ function syncRoamMode() {
 }
 
 // ---------------------------------------------------------------------------
+// 全屏游戏自动隐藏
+//
+// 置顶浮窗会盖在全屏游戏上，所以检测到"有程序铺满整个显示器"时把她藏起来。
+//
+// 判定用前台窗口矩形 vs 它所在显示器的矩形：完全覆盖 = 全屏。
+// 这样无边框全屏（窗口矩形正好等于显示器，多数现代游戏都是这种）也能认出来；
+// 而"最大化的窗口"只覆盖工作区、盖不住任务栏，不会误判。
+//
+// 走 koffi（纯 N-API 的 FFI）直接调 user32，微秒级、不启进程、不写脚本，
+// 不会触发杀软那套"隐藏 PowerShell"启发式。koffi 没装就优雅降级（不自动隐藏）。
+// ---------------------------------------------------------------------------
+const FULLSCREEN_POLL_MS = 2000
+let fullscreenTimer = null
+let fullscreenHidden = false
+let fsProbe
+let fsProbeTried = false
+let lastFsDescribe = ''
+
+/** 只初始化一次（koffi 的 struct 注册是全局的，重复注册会抛 Duplicate type name）。 */
+function getFsProbe() {
+  if (!fsProbeTried) {
+    fsProbeTried = true
+    fsProbe = initFullscreenProbe()
+  }
+  return fsProbe
+}
+
+function initFullscreenProbe() {
+  let koffi
+  try {
+    koffi = require('koffi')
+  } catch {
+    console.log('[whale-pet] 没装 koffi，全屏自动隐藏不可用（npm install 后可用）')
+    return null
+  }
+  try {
+    // 注意：结构体里引用另一个结构体要用**变量**，写名字会报 Unknown type name
+    const RECT = koffi.struct('WhalePetRect', {
+      left: 'long', top: 'long', right: 'long', bottom: 'long',
+    })
+    const MONITORINFO = koffi.struct('WhalePetMonitorInfo', {
+      cbSize: 'uint32', rcMonitor: RECT, rcWork: RECT, dwFlags: 'uint32',
+    })
+    const user32 = koffi.load('user32.dll')
+    const GetForegroundWindow = user32.func('void* GetForegroundWindow()')
+    const IsWindowVisible = user32.func('bool IsWindowVisible(void* h)')
+    // 函数签名里必须写**注册时用的名字**（WhalePetRect / WhalePetMonitorInfo）
+    const GetWindowRect = user32.func('bool GetWindowRect(void* h, _Out_ WhalePetRect* r)')
+    const MonitorFromWindow = user32.func('void* MonitorFromWindow(void* h, uint32 flags)')
+    const GetMonitorInfoW = user32.func('bool GetMonitorInfoW(void* mon, _Inout_ WhalePetMonitorInfo* mi)')
+    const miSize = koffi.sizeof(MONITORINFO)
+
+    const own = new Set()
+    const collectOwn = () => {
+      own.clear()
+      for (const w of BrowserWindow.getAllWindows()) {
+        try {
+          const h = w.getNativeWindowHandle()
+          own.add(h.readBigUInt64LE ? h.readBigUInt64LE(0).toString() : String(h.readUInt32LE(0)))
+        } catch { /* ignore */ }
+      }
+    }
+
+    return {
+      isForegroundFullscreen() {
+        const h = GetForegroundWindow()
+        if (!h) return false
+        if (!IsWindowVisible(h)) return false
+        collectOwn()
+        if (own.has(String(h))) return false          // 别把自己判成全屏
+        const r = {}
+        if (!GetWindowRect(h, r)) return false
+        const mon = MonitorFromWindow(h, 2)           // MONITOR_DEFAULTTONEAREST
+        if (!mon) return false
+        const mi = { cbSize: miSize }
+        if (!GetMonitorInfoW(mon, mi)) return false
+        const m = mi.rcMonitor
+        return r.left <= m.left && r.top <= m.top && r.right >= m.right && r.bottom >= m.bottom
+      },
+      /** 诊断用：把最近一次探测的原始数据描述出来 */
+      describe() {
+        const h = GetForegroundWindow()
+        if (!h) return 'no foreground'
+        const r = {}
+        GetWindowRect(h, r)
+        const mon = MonitorFromWindow(h, 2)
+        const mi = { cbSize: miSize }
+        GetMonitorInfoW(mon, mi)
+        const m = mi.rcMonitor
+        collectOwn()
+        return `hwnd=${h} own=${own.has(String(h))} visible=${IsWindowVisible(h)}`
+          + ` rect=${r.left},${r.top}-${r.right},${r.bottom} mon=${m.left},${m.top}-${m.right},${m.bottom}`
+      },
+    }
+  } catch (e) {
+    console.log('[whale-pet] 全屏探测初始化失败: ' + (e && e.message))
+    return null
+  }
+}
+
+function autoHideEnabled() {
+  return readConfig().autoHideFullscreen !== false   // 默认开
+}
+
+function applyFullscreenState(full) {
+  if (!win || win.isDestroyed()) return
+  if (full && !fullscreenHidden) {
+    fullscreenHidden = true
+    win.hide()
+    console.log('[whale-pet] 检测到全屏程序 -> 隐藏桌宠')
+  } else if (!full && fullscreenHidden) {
+    fullscreenHidden = false
+    win.showInactive()
+    win.setAlwaysOnTop(true, 'screen-saver')
+    console.log('[whale-pet] 全屏结束 -> 显示桌宠')
+  }
+}
+
+function startFullscreenWatch() {
+  if (fullscreenTimer) return
+  fsProbe = getFsProbe()
+  if (!fsProbe) return
+  fullscreenTimer = setInterval(() => {
+    try {
+      const full = autoHideEnabled() && fsProbe.isForegroundFullscreen()
+      if (process.env.PET_DEV) {
+        const d = fsProbe.describe ? fsProbe.describe() : ''
+        if (d !== lastFsDescribe) { lastFsDescribe = d; console.log('[whale-pet] fs: ' + d) }
+      }
+      applyFullscreenState(full)
+    } catch (e) {
+      if (process.env.PET_DEV) console.log('[whale-pet] fs poll error: ' + (e && e.message))
+    }
+  }, FULLSCREEN_POLL_MS)
+}
+
+// ---------------------------------------------------------------------------
 // 开机自启
 //
 // ⚠️ 历史教训：最早这里是「启动文件夹放一个 .cmd → 用 powershell.exe
@@ -351,6 +488,17 @@ function menuTemplate() {
     { label: '鼠标穿透开关（' + HOTKEY.replace('CommandOrControl', 'Ctrl') + '）', click: () => toggleClickThrough() },
     { type: 'separator' },
     { label: '开机自启', type: 'checkbox', checked: autostartOn(), click: () => setAutostart(!autostartOn()) },
+    {
+      label: '全屏游戏时自动隐藏',
+      type: 'checkbox',
+      checked: autoHideEnabled(),
+      enabled: !!getFsProbe(),
+      click: () => {
+        writeConfig({ autoHideFullscreen: !autoHideEnabled() })
+        if (getFsProbe() && !fullscreenTimer) startFullscreenWatch()
+        buildTrayMenu()
+      },
+    },
     { label: '🌐 DeepSeek 官网', click: () => shell.openExternal(DEEPSEEK_SITE) },
     { type: 'separator' },
     { label: '退出桌宠', click: () => app.quit() },
@@ -646,6 +794,7 @@ app.whenReady().then(async () => {
   setupTray()
   setupShortcut()
   syncRoamMode()
+  startFullscreenWatch()
   rectTimer = setInterval(syncInteractive, 60)
 
   // 调试用：创建 ~/.whale-pet-desktop/snap-request 即截图一次（透明浮窗系统截图抓不到）
